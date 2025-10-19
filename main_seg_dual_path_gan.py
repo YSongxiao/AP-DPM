@@ -2,11 +2,11 @@ import argparse
 import torch
 import torch.nn as nn
 from utils import *
-from trainer import GANSegTrainer, DualSegTester
+from trainer import GANSegTrainer, DualSegTester, SegInferer
 import monai
 import timm
 from pathlib import Path
-from datasets.carpal import CarpalNpyDataset, CarpalNpyDatasetWithOverlap, get_dataloader
+from datasets.carpal import CarpalNpyDatasetWithOverlapInfer, CarpalNpyDatasetWithOverlap, get_dataloader
 import torch.optim as optim
 from datetime import datetime
 from typing import Union
@@ -145,6 +145,13 @@ def get_args():
         default=True,
         help='Whether save pred (Test mode only).',
     )
+
+    parser.add_argument(
+        '--save_npy',
+        action='store_true',
+        default=False,
+        help='Whether to save the npy (Inference mode only).'
+    )
     args = parser.parse_args()
     return args
 
@@ -230,4 +237,13 @@ elif args.mode == "test":
     if not (Path(args.checkpoint) / "model_best.pth").exists():
         raise KeyError("Test mode is set but checkpoint does not exist.")
     tester = DualSegTester(args, net, test_loader, device="cuda:0")
+    tester.test()
+
+elif args.mode == "infer":
+    transform_test = get_transform(split="test", image_size=args.image_size)
+    test_dataset = CarpalNpyDatasetWithOverlapInfer(data_root=Path(args.data_path), transform=transform_test)
+    test_loader = get_dataloader(test_dataset, batch_size=1, shuffle=False)
+    if not (Path(args.checkpoint) / "model_best.pth").exists():
+        raise KeyError("Test mode is set but checkpoint does not exist.")
+    tester = SegInferer(args, net, test_loader, device="cuda:0")
     tester.test()

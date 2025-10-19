@@ -743,9 +743,10 @@ class SegInferer:
         self.net.load_state_dict(torch.load((Path(args.checkpoint) / "model_best.pth"))["model"])
         self.test_loader = test_loader
         self.device = device
-        self.save_overlay = args.save_overlay
-        self.save_csv = args.save_csv
-        self.metrics = SegmentationMetrics(num_classes=14)
+        self.save_npy = args.save_npy
+        if self.save_npy:
+            if not (Path(self.args.checkpoint) / "infer_npy").exists():
+                (Path(self.args.checkpoint) / "infer_npy").mkdir(parents=True, exist_ok=False)
         if next(self.net.parameters()).device != self.device:
             self.net = self.net.to(self.device)
 
@@ -755,103 +756,15 @@ class SegInferer:
         with torch.no_grad():
             for step, batch in enumerate(pbar):
                 img = batch["img"]
-                gt = batch["gt"]
-                # Avoid non-binary value caused by resize
-                gt[gt > 0.5] = 1
-                gt[gt <= 0.5] = 0
                 if img.device != self.device:
                     img = img.to(self.device)
-                if gt.device != self.device:
-                    gt = gt.to(self.device)
-                pred = self.net(img)
+                _, pred = self.net(img)
                 pred_bin = pred
                 pred_bin[pred_bin > 0.5] = 1
                 pred_bin[pred_bin <= 0.5] = 0
-                self.metrics.update_metrics(pred_bin, gt, batch["fname"][0])
                 pbar.set_description(f"Testing at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-                if self.save_overlay:
-                    self.create_overlay(self.args, image=img, pred=pred, mask=gt, fname=batch["fname"])
-        if self.save_csv:
-            self.create_csv(self.args)
-        metrics_dict = self.metrics.get_metrics()
-        dsc_reduced = metrics_dict["dsc"].mean()
-        print("Mean DSC: ", dsc_reduced)
-        nsd_reduced = metrics_dict["nsd"].mean()
-        print("Mean NSD: ", nsd_reduced)
-
-    def create_overlay(self, args, image, pred, mask, fname):
-        save_path = Path(args.checkpoint) / "overlay"
-        if not save_path.exists():
-            save_path.mkdir(parents=True)
-        colors = [
-            [0.1522, 0.4717, 0.9685],
-            [0.3178, 0.0520, 0.8333],
-            [0.3834, 0.3823, 0.6784],
-            [0.8525, 0.1303, 0.4139],
-            [0.9948, 0.8252, 0.3384],
-            [0.8476, 0.7147, 0.2453],
-            [0.2865, 0.8411, 0.0877],
-            [0.1558, 0.4940, 0.4668],
-            [0.9199, 0.5882, 0.5113],
-            [0.1335, 0.5433, 0.6149],
-            [0.0629, 0.7343, 0.0943],
-            [0.8183, 0.2786, 0.3053],
-            [0.1789, 0.5083, 0.6787],
-            [0.9746, 0.1909, 0.4295],
-            [0.1586, 0.8670, 0.6994],
-            [0.9156, 0.1241, 0.3829],
-            [0.2998, 0.3054, 0.4242],
-            [0.7719, 0.7786, 0.1164],
-            [0.8033, 0.9278, 0.7621],
-            [0.1085, 0.5155, 0.4145]
-        ]
-        pred_mask_bin = pred.detach()
-        pred_mask_bin[pred_mask_bin > 0.5] = 1
-        pred_mask_bin[pred_mask_bin <= 0.5] = 0
-        fig, ax = plt.subplots(1, 3, figsize=(15, 6))
-        ax[0].imshow(image[0][0].cpu().numpy(), 'gray')
-        ax[1].imshow(image[0][0].cpu().numpy(), 'gray')
-        ax[2].imshow(image[0][0].cpu().numpy(), 'gray')
-        ax[0].set_title("Image")
-        ax[1].set_title("Segmentation")
-        ax[2].set_title("GT")
-        ax[0].axis('off')
-        ax[1].axis('off')
-        ax[2].axis('off')
-
-        for i in range(pred_mask_bin.shape[1]):
-            seg = pred_mask_bin[0][i].cpu().numpy()
-            show_mask((seg == 1).astype(np.uint8), ax[1], mask_color=np.array(colors[i]))
-            show_mask((mask[0][i].cpu().numpy() == 1).astype(np.uint8), ax[2], mask_color=np.array(colors[i]))
-        plt.tight_layout()
-        plt.savefig(save_path / (fname[0] + '.pdf'), dpi=600)
-        plt.close()
-
-    def create_csv(self, args):
-        save_path = Path(args.checkpoint)
-        metrics_dict = self.metrics.get_metrics()
-        num_classes = self.metrics.num_labels
-        dsc_df = pd.DataFrame(metrics_dict["dsc_pc"], columns=[f"DSC {bone_name_dict[i]}" for i in range(num_classes)])
-        dsc_mean_df = pd.DataFrame(metrics_dict["dsc"], columns=["Mean DSC"])
-        nsd_df = pd.DataFrame(metrics_dict["nsd_pc"], columns=[f"NSD {bone_name_dict[i]}" for i in range(num_classes)])
-        nsd_mean_df = pd.DataFrame(metrics_dict["nsd"], columns=["Mean NSD"])
-        voe_df = pd.DataFrame(metrics_dict["voe_pc"], columns=[f"VOE {bone_name_dict[i]}" for i in range(num_classes)])
-        voe_mean_df = pd.DataFrame(metrics_dict["voe"], columns=["Mean VOE"])
-        msd_df = pd.DataFrame(metrics_dict["msd_pc"], columns=[f"MSD {bone_name_dict[i]}" for i in range(num_classes)])
-        msd_mean_df = pd.DataFrame(metrics_dict["msd"], columns=["Mean MSD"])
-        ravd_df = pd.DataFrame(metrics_dict["ravd_pc"], columns=[f"RAVD {bone_name_dict[i]}" for i in range(num_classes)])
-        ravd_mean_df = pd.DataFrame(metrics_dict["ravd"], columns=["Mean RAVD"])
-
-
-        fname_df = pd.DataFrame(metrics_dict["fname"], columns=['Case'])
-        metric_df = pd.concat(
-         [fname_df, dsc_df, dsc_mean_df, nsd_df, nsd_mean_df, voe_df, voe_mean_df, msd_df, msd_mean_df,
-               ravd_df, ravd_mean_df], axis=1)
-
-        column_means = metric_df.iloc[:, 1:].mean()
-        average_row = pd.DataFrame([['Average'] + column_means.tolist()], columns=metric_df.columns)
-        final_df = pd.concat([metric_df, average_row], ignore_index=True)
-        final_df.to_csv((save_path / 'test_metrics.csv'), index=False)
+                if self.save_npy:
+                    np.save(Path(self.args.checkpoint) / "infer_npy" / (batch["fname"][0] + ".npy"), pred_bin.squeeze().cpu().numpy().astype(np.uint8))
 
 
 class EarlyStopping:

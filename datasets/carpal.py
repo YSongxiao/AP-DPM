@@ -165,6 +165,39 @@ class CarpalNpyDatasetWithOverlap(Dataset):
         return len(self.filenames)
 
 
+class CarpalNpyDatasetWithOverlapInfer(Dataset):
+    def __init__(self, data_root, transform=None):
+        self.data_root = data_root
+        self.transform = transform
+
+        # 存储结果，每张图一个 mask 列表
+        self.filenames = [str(fname.stem) for fname in Path(self.data_root).rglob("*.bmp")]
+
+    def __getitem__(self, idx):
+        # 归一化
+        def normalization(data):
+            range = np.max(data) - np.min(data)
+            return (data - np.min(data)) / range
+
+        path = Path(self.data_root) / (self.filenames[idx] + ".bmp")
+        img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if self.filenames[idx][-1] == "L":
+            img = cv2.flip(img, 1)  # Horizontal Flip
+
+        img = normalization(img[..., np.newaxis]).astype(np.float32)
+        dic = self.transform(image=img)
+        img = dic['image'].float()
+
+        data = {
+            "fname": self.filenames[idx],
+            "img": img,
+        }
+        return data
+
+    def __len__(self):
+        return len(self.filenames)
+
+
 class CarpalNpyDatasetWithOverlapPlus(Dataset):
     def __init__(self, data_root, annotation_path, transform=None):
         self.data_root = data_root
